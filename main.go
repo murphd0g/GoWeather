@@ -39,22 +39,24 @@ func main() {
 	// Weather endpoint
 	r.GET("/weather", func(c *gin.Context) {
 		address := c.Query("address")
-		benchmark := c.DefaultQuery("benchmark", "2020")
-		format := c.DefaultQuery("format", "json")
 
 		if address == "" {
 			c.String(http.StatusBadRequest, "Address parameter is missing")
 			return
 		}
 
-		baseURL := "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
+		// Use OpenStreetMap Nominatim for geocoding
+		baseURL := "https://nominatim.openstreetmap.org/search"
 		params := url.Values{}
-		params.Set("address", address)
-		params.Set("benchmark", benchmark)
-		params.Set("format", format)
+		params.Set("q", address)
+		params.Set("format", "json")
+		params.Set("limit", "1")
 
 		fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
-		resp, err := http.Get(fullURL)
+		req, _ := http.NewRequest("GET", fullURL, nil)
+		req.Header.Set("User-Agent", "GoWeatherApp (your@email.com)")
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			c.String(http.StatusInternalServerError, "Failed to connect to geocoding API")
 			return
@@ -67,36 +69,30 @@ func main() {
 			return
 		}
 
-		type GeocodeResult struct {
-			Result struct {
-				AddressMatches []struct {
-					Coordinates struct {
-						X float64 `json:"x"`
-						Y float64 `json:"y"`
-					} `json:"coordinates"`
-				} `json:"addressMatches"`
-			} `json:"result"`
+		type NominatimResult struct {
+			Lat         string `json:"lat"`
+			Lon         string `json:"lon"`
+			DisplayName string `json:"display_name"`
 		}
 
-		var result GeocodeResult
-		if err := json.Unmarshal(body, &result); err != nil {
+		var results []NominatimResult
+		if err := json.Unmarshal(body, &results); err != nil {
 			c.String(http.StatusInternalServerError, "Failed to parse JSON")
 			return
 		}
 
-		if len(result.Result.AddressMatches) == 0 {
+		if len(results) == 0 {
 			c.String(http.StatusOK, "No coordinates found for '%s'", address)
 			return
 		}
 
-		coords := result.Result.AddressMatches[0].Coordinates
-		lat := fmt.Sprintf("%.4f", coords.Y)
-		lon := fmt.Sprintf("%.4f", coords.X)
+		lat := results[0].Lat
+		lon := results[0].Lon
 
 		pointsURL := fmt.Sprintf("https://api.weather.gov/points/%s,%s", lat, lon)
-		req, _ := http.NewRequest("GET", pointsURL, nil)
-		req.Header.Set("User-Agent", "GoWeatherApp (your@email.com)")
-		pointsResp, err := http.DefaultClient.Do(req)
+		pointsReq, _ := http.NewRequest("GET", pointsURL, nil)
+		pointsReq.Header.Set("User-Agent", "GoWeatherApp (your@email.com)")
+		pointsResp, err := http.DefaultClient.Do(pointsReq)
 		if err != nil {
 			c.String(http.StatusInternalServerError, "Failed to fetch weather metadata")
 			return
@@ -121,13 +117,13 @@ func main() {
 		}
 		forecastURL := points.Properties.Forecast
 		if forecastURL == "" {
-			c.String(http.StatusOK, "Coordinates for '%s': Latitude: %.4f, Longitude: %.4f\nNo forecast URL found for this location.", address, coords.Y, coords.X)
+			c.String(http.StatusOK, "Coordinates for '%s': Latitude: %s, Longitude: %s\nNo forecast URL found for this location.", address, lat, lon)
 			return
 		}
 
-		req2, _ := http.NewRequest("GET", forecastURL, nil)
-		req2.Header.Set("User-Agent", "GoWeatherApp (your@email.com)")
-		forecastResp, err := http.DefaultClient.Do(req2)
+		forecastReq, _ := http.NewRequest("GET", forecastURL, nil)
+		forecastReq.Header.Set("User-Agent", "GoWeatherApp (your@email.com)")
+		forecastResp, err := http.DefaultClient.Do(forecastReq)
 		if err != nil {
 			c.String(http.StatusInternalServerError, "Failed to fetch weather forecast")
 			return
@@ -158,12 +154,12 @@ func main() {
 		if len(forecast.Properties.Periods) > 0 {
 			p := forecast.Properties.Periods[0]
 			c.String(http.StatusOK,
-				"Coordinates for '%s': Latitude: %.4f, Longitude: %.4f\nWeather Forecast for %s: %d°F, %s",
-				address, coords.Y, coords.X, p.Name, p.Temperature, p.ShortForecast)
+				"Coordinates for '%s': Latitude: %s, Longitude: %s\nWeather Forecast for %s: %d°F, %s",
+				address, lat, lon, p.Name, p.Temperature, p.ShortForecast)
 		} else {
 			c.String(http.StatusOK,
-				"Coordinates for '%s': Latitude: %.4f, Longitude: %.4f\nNo weather forecast data available.",
-				address, coords.Y, coords.X)
+				"Coordinates for '%s': Latitude: %s, Longitude: %s\nNo weather forecast data available.",
+				address, lat, lon)
 		}
 	})
 
