@@ -40,4 +40,4 @@ The frontend will run on `http://localhost:5173`
 
 - **Frontend**: SvelteKit 2 with Svelte 5
 - **Backend**: Go with Gin framework
-- **APIs**: US Census Geocoding API & National Weather Service API
+- **APIs**: OpenStreetMap Nominatim & National Weather Service API
